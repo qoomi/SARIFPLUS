@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<!-- HTTPS Enforcement Script -->
+<script>
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        location.replace(`https:${location.href.substring(location.protocol.length)}`);
+    }
+</script>
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login | Device Admin Panel</title>
+    <meta name="description" content="Secure login for Device Admin Subscription Management.">
+
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; frame-src 'self' https://challenges.cloudflare.com; connect-src https://nmepqkwuujlfduiexplm.supabase.co https://unpkg.com https://cdn.jsdelivr.net https://challenges.cloudflare.com ws://127.0.0.1:* http://127.0.0.1:*; img-src 'self' data:;">
+
+    <!-- Fonts & Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@0.400.0" crossorigin="anonymous"></script>
+
+    <!-- Supabase Lib -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.42.0" crossorigin="anonymous"></script>
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="../css/style.css">
+    <link rel="stylesheet" href="../css/login.css">
+    <link rel="stylesheet" href="../css/mobile.css">
+
+    <!-- Cloudflare Turnstile -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+</head>
+
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <span class="login-logo">DeviceAdmin</span>
+                <p class="login-subtitle">Please sign in to access the management panel.</p>
+            </div>
+
+            <form id="login-form" class="login-form">
+                <div class="form-group">
+                    <label class="form-label" for="email">Admin Email</label>
+                    <input type="email" id="email" class="form-input" placeholder="admin@example.com" 
+                        required autofocus autocomplete="email" 
+                        pattern="[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="password">Password</label>
+                    <input type="password" id="password" class="form-input" placeholder="••••••••" 
+                        required autocomplete="current-password"
+                        minlength="6">
+                </div>
+
+                <button type="submit" id="btn-login" class="btn btn-primary btn-login">
+                    <span id="btn-text">Sign In to Dashboard</span>
+                    <div id="btn-loader" class="spinner" style="display: none;"></div>
+                </button>
+
+                <!-- Point 7: Bot Protection - Cloudflare Turnstile -->
+                <div class="cf-turnstile" data-sitekey="0x4AAAAAAC59ynmk6Z4J0aSv" style="margin-top: 1.5rem;"></div>
+            </form>
+
+            <div class="login-footer">
+                &copy; MMA Group. All rights reserved.
+            </div>
+        </div>
+    </div>
+
+    <!-- Notifications Container (Toast) -->
+    <div id="toast" class="toast">
+        Action successful!
+    </div>
+
+    <script src="../js/supabase.js"></script>
+    <script src="../js/notifications.js"></script>
+    <script src="../js/login.js"></script>
+    <script>
+        // Init Icons
+        lucide.createIcons();
+    </script>
+</body>
+
+</html>
