@@ -1,3 +1,10 @@
+async function sha256(message) {
+    const msgBuffer = new TextEncoder().encode(message);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 // --- Authentication Check (Session Security) ---
 async function checkAuth() {
     const loginPage = 'login.html';
@@ -21,16 +28,17 @@ async function checkAuth() {
     // 2. Point 4 & 23: Verify Role Authority (Dual-Check)
     const user = session.user;
     const role = user.user_metadata?.role;
-    const allowedEmail = 'cabdifataaxmaxamad476@gmail.com';
+    const allowedEmailHash = '450aa00737e468b66054a98555fda2dadf3e9c0de961dbde2ff43c0d0a46166e';
+    const userEmailHash = await sha256(user.email);
 
     // Double Verification: Check metadata first, then verify via Database RPC
     const { data: isAdmin, error: rpcError } = await window.supabaseClient.rpc('check_is_admin');
 
-    if (user.email !== allowedEmail || (role !== 'Admin' && role !== 'Super Admin') || rpcError || !isAdmin) {
+    if (userEmailHash !== allowedEmailHash || (role !== 'Admin' && role !== 'Super Admin') || rpcError || !isAdmin) {
         console.error('script.js: ACCESS DENIED. (Email, Role, or RPC Failed)');
         
         let reason = 'Access Denied: ';
-        if (user.email !== allowedEmail) reason += 'Unauthorized email.';
+        if (userEmailHash !== allowedEmailHash) reason += 'Unauthorized email fingerprint.';
         else if (role !== 'Admin' && role !== 'Super Admin') reason += 'Unauthorized role.';
         else reason += 'Database verification failed.';
 
