@@ -18,7 +18,7 @@ const DeviceDB = {
         // Use a direct join. Default alias for related table is its name.
         const { data, error } = await window.supabaseClient
             .from(this.tableName)
-            .select('*, device_details (username, amount, description)')
+            .select('*, device_details (username, amount, description, payment_status)')
             .order('created_at', { ascending: false });
 
         if (error) {
@@ -37,7 +37,8 @@ const DeviceDB = {
                 expiry: d.expiry || new Date().toISOString(),
                 username: details?.username || 'N/A', // Default fallback
                 amount: details?.amount || 0,         // Default fallback
-                description: details?.description || '' // Default fallback
+                description: details?.description || '', // Default fallback
+                payment_status: details?.payment_status || 'unclassified'
             };
         });
     },
@@ -62,6 +63,13 @@ const DeviceDB = {
 
             if (error) {
                 return null;
+            }
+
+            // Sync payment_status if it's explicitly set during creation
+            if (deviceData.payment_status && deviceData.payment_status !== 'unclassified') {
+                await window.supabaseClient.from('device_details')
+                    .update({ payment_status: deviceData.payment_status })
+                    .eq('device_id', data.id);
             }
 
             // Return combined object for the UI

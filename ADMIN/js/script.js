@@ -65,6 +65,7 @@ let devices = []; // Initialized from Supabase
 
 let currentSort = { column: 'code', direction: 'asc' };
 let searchQuery = '';
+let statusFilter = 'all'; // New filter state
 let deviceToRemove = null;
 let deviceToExtend = null; // New
 let removeTimerInterval = null;
@@ -79,6 +80,7 @@ const devicesBody = document.getElementById('devices-body');
 const sidebar = document.getElementById('sidebar');
 const sidebarToggle = document.getElementById('sidebar-toggle');
 const deviceSearch = document.getElementById('device-search');
+const statusFilterDropdown = document.getElementById('status-filter'); // New
 const breadcrumb = document.querySelector('#breadcrumb span');
 
 // Views
@@ -94,6 +96,7 @@ const statExpired = document.getElementById('stat-expired');
 const statExpiringSoon = document.getElementById('stat-expiring-soon');
 const statBanned = document.getElementById('stat-banned');
 const statHealth = document.getElementById('stat-health');
+const statUnpaid = document.getElementById('stat-unpaid');
 
 // Modals
 const addDeviceModal = document.getElementById('add-device-modal');
@@ -165,6 +168,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Auto-refresh UI every minute to keep timers accurate
     setInterval(() => {
         renderTable();
+        updateStats(); // Added to keep dashboard counts accurate
         updateReports();
     }, 60000);
 
@@ -274,18 +278,48 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
     });
+
+    // Payment Status UI Toggle for Registration
+    const paymentRadios = document.querySelectorAll('input[name="payment-status"]');
+    const amountLabel = document.getElementById('label-device-amount');
+    paymentRadios.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            if (amountLabel) {
+                amountLabel.textContent = e.target.value === 'unpaid' ? 'Amount Expected' : 'Amount Paid';
+            }
+        });
+    });
+
+    const editPaymentRadios = document.querySelectorAll('input[name="edit-payment-status"]');
+    const editAmountLabel = document.getElementById('label-edit-device-amount');
+    editPaymentRadios.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            if (editAmountLabel) {
+                editAmountLabel.textContent = e.target.value === 'unpaid' ? 'Amount Expected' : 'Amount Paid';
+            }
+        });
+    });
 });
 
 // --- Core Functions ---
 
 function updateStats() {
-    const total = devices.length;
-    const active = devices.filter(d => d.status === 'Active').length;
-    const expired = devices.filter(d => d.status === 'Expired').length;
-    const banned = devices.filter(d => d.status === 'Banned').length;
-
-    // Expiring soon: within next 7 days
     const now = new Date();
+    const total = devices.length;
+    
+    // Active: status is Active AND it hasn't expired yet
+    const active = devices.filter(d => d.status === 'Active' && new Date(d.expiry) > now).length;
+    
+    // Expired: status is Expired OR (status is Active but it HAS expired)
+    // We ignore Banned devices in this count as they have their own card
+    const expired = devices.filter(d => 
+        d.status === 'Expired' || (d.status === 'Active' && new Date(d.expiry) <= now)
+    ).length;
+    
+    const banned = devices.filter(d => d.status === 'Banned').length;
+    const unpaid = devices.filter(d => d.payment_status === 'unpaid').length;
+
+    // Expiring soon: within next 7 days (and still active)
     const nextWeek = new Date();
     nextWeek.setDate(now.getDate() + 7);
     const expiringSoon = devices.filter(d => {
@@ -293,8 +327,9 @@ function updateStats() {
         return d.status === 'Active' && expiry >= now && expiry <= nextWeek;
     }).length;
 
-    // Health Score: (Active / (Total - Banned)) * 100 or just (Active/Total)
-    const health = total > 0 ? Math.round((active / total) * 100) : 0;
+    // Health Score: percentage of non-banned devices that are active
+    const nonBanned = total - banned;
+    const health = nonBanned > 0 ? Math.round((active / nonBanned) * 100) : 0;
 
     // Update Text
     if (statTotal) statTotal.textContent = total;
@@ -304,6 +339,7 @@ function updateStats() {
     if (statBanned) statBanned.textContent = banned;
     if (statExpiringSoon) statExpiringSoon.textContent = expiringSoon;
     if (statHealth) statHealth.textContent = `${health}%`;
+    if (statUnpaid) statUnpaid.textContent = unpaid;
 }
 
 function showToast(message, type = 'info') {
@@ -326,18 +362,33 @@ function renderTable() {
     if (!devicesBody) return;
 
     // Filter
-    let filtered = devices.filter(d =>
-        d.code.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    let filtered = devices.filter(d => {
+        const query = searchQuery.toLowerCase();
+        const matchesSearch = d.code.toLowerCase().includes(query) || 
+                              (d.username && d.username.toLowerCase().includes(query));
+        
+        let matchesStatus = false;
+        if (statusFilter === 'all') {
+            matchesStatus = true;
+        } else if (statusFilter === 'Active' || statusFilter === 'Expired' || statusFilter === 'Banned') {
+            matchesStatus = d.status === statusFilter;
+        } else if (statusFilter === 'Paid') {
+            matchesStatus = d.payment_status === 'paid';
+        } else if (statusFilter === 'Unpaid') {
+            matchesStatus = d.payment_status === 'unpaid';
+        }
+        
+        return matchesSearch && matchesStatus;
+    });
 
     // Sort
     filtered.sort((a, b) => {
         let valA = a[currentSort.column].toString().toLowerCase();
         let valB = b[currentSort.column].toString().toLowerCase();
 
-        if (currentSort.column === 'expiry' || currentSort.column === 'created_at') {
-            valA = new Date(a[currentSort.column]);
-            valB = new Date(b[currentSort.column]);
+        if (currentSort.column === 'expiry' || currentSort.column === 'created_at' || currentSort.column === 'cycle_start_date') {
+            valA = new Date(a[currentSort.column] || 0);
+            valB = new Date(b[currentSort.column] || 0);
         }
 
         if (valA < valB) return currentSort.direction === 'asc' ? -1 : 1;
@@ -349,7 +400,13 @@ function renderTable() {
     devicesBody.innerHTML = '';
     filtered.forEach(device => {
         const tr = document.createElement('tr');
-        const statusClass = device.status.toLowerCase();
+        const now = new Date();
+        
+        // Determine real-time status based on expiry
+        const isExpired = new Date(device.expiry) <= now && device.status !== 'Banned';
+        const displayStatus = isExpired ? 'Expired' : device.status;
+        const statusClass = displayStatus.toLowerCase();
+        
         const timeLeft = getTimeLeft(device.expiry);
 
         // Severity Badge Logic
@@ -366,6 +423,7 @@ function renderTable() {
                 <div style="display: flex; flex-direction: column; gap: 2px;">
                     <div style="display: flex; align-items: center;">
                         <span class="device-code-display" style="font-weight: 600; color: var(--text-main); font-size: 0.9375rem;"></span>
+                        <span class="payment-badge-container"></span>
                         <span class="severity-badge-container"></span>
                     </div>
                     <div style="display: flex; flex-direction: column; gap: 1px;">
@@ -376,13 +434,23 @@ function renderTable() {
             </td>
             <td>
                 <span class="status-badge ${statusClass}">
-                    ${device.status}
+                    ${displayStatus}
                 </span>
+            </td>
+            <td>
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <span style="color: var(--text-main); font-size: 0.875rem; font-weight: 500;">${device.cycle_start_date ? formatDate(device.cycle_start_date) : 'Unknown'}</span>
+                </div>
             </td>
             <td>
                 <div style="display: flex; flex-direction: column; gap: 2px;">
                     <span style="color: var(--text-main); font-size: 0.875rem; font-weight: 500;">${timeLeft}</span>
                     <span style="color: var(--text-muted); font-size: 0.75rem;">${formatDate(device.expiry)}</span>
+                </div>
+            </td>
+            <td>
+                <div style="display: flex; flex-direction: column; gap: 2px; align-items: center;">
+                    <span style="color: var(--primary); font-size: 1rem; font-weight: 700;">${device.renewal_count || 0}</span>
                 </div>
             </td>
             <td>
@@ -425,6 +493,24 @@ function renderTable() {
             const badge = tr.querySelector('.severity-badge-container');
             badge.innerHTML = `<span style="font-size: 0.65rem; background: ${levelColor[device.update_level]}; color: white; padding: 2px 6px; border-radius: 4px; margin-left: 8px; font-weight: 600;">${levelMap[device.update_level].toUpperCase()}</span>`;
         }
+        
+        // Paid/Unpaid Badge
+        let payStatus = 'Paid';
+        let payColor = '#10b981'; // Green
+        
+        if (device.payment_status === 'unpaid') {
+            payStatus = 'Unpaid';
+            payColor = '#f43f5e'; // Red
+        } else if (device.payment_status === 'unclassified' || !device.payment_status) {
+            payStatus = 'Unclassified';
+            payColor = '#94a3b8'; // Gray
+        }
+
+        const payBadgeContainer = tr.querySelector('.payment-badge-container');
+        if (payBadgeContainer) {
+            payBadgeContainer.innerHTML = `<span style="font-size: 0.65rem; background: ${payColor}; color: white; padding: 2px 6px; border-radius: 4px; margin-left: 8px; font-weight: 600;">${payStatus.toUpperCase()}</span>`;
+        }
+
         devicesBody.appendChild(tr);
     });
 
@@ -558,8 +644,9 @@ function updateReports() {
     if (!statusPieChart) return;
 
     // 1. Update Pie Chart (Status Breakdown)
-    const active = devices.filter(d => d.status === 'Active').length;
-    const expired = devices.filter(d => d.status === 'Expired').length;
+    const now = new Date();
+    const active = devices.filter(d => d.status === 'Active' && new Date(d.expiry) > now).length;
+    const expired = devices.filter(d => d.status === 'Expired' || (d.status === 'Active' && new Date(d.expiry) <= now)).length;
     const banned = devices.filter(d => d.status === 'Banned').length;
     statusPieChart.data.datasets[0].data = [active, expired, banned];
 
@@ -628,7 +715,13 @@ function updateReports() {
         } else {
             sortedActivity.forEach(d => {
                 const tr = document.createElement('tr');
-                const statusClass = d.status.toLowerCase();
+                const now = new Date();
+                
+                // Determine real-time status based on expiry
+                const isExpired = new Date(d.expiry) <= now && d.status !== 'Banned';
+                const displayStatus = isExpired ? 'Expired' : d.status;
+                const statusClass = displayStatus.toLowerCase();
+                
                 const daysLeft = getTimeLeft(d.expiry);
                 tr.innerHTML = `
                     <td>
@@ -637,7 +730,7 @@ function updateReports() {
                             <span class="d-user" style="font-size: 0.7rem; color: var(--text-muted);"></span>
                         </div>
                     </td>
-                    <td><span class="status-badge ${statusClass}" style="scale: 0.8; transform-origin: left;">${d.status}</span></td>
+                    <td><span class="status-badge ${statusClass}" style="scale: 0.8; transform-origin: left;">${displayStatus}</span></td>
                     <td>${daysLeft}</td>
                     <td style="font-size: 0.875rem; font-weight: 500;">${timeAgo(d.last_checked_at)}</td>
                 `;
@@ -704,6 +797,13 @@ if (deviceSearch) {
     });
 }
 
+if (statusFilterDropdown) {
+    statusFilterDropdown.addEventListener('change', (e) => {
+        statusFilter = e.target.value;
+        renderTable();
+    });
+}
+
 // Modal Toggle Helpers
 const toggleAddModal = (show) => {
     if (!addDeviceModal) return;
@@ -753,6 +853,21 @@ const toggleEditModal = (show, device = null) => {
         if (editUsername) editUsername.value = device.username;
         if (editAmount) editAmount.value = device.amount;
         if (editDescription) editDescription.value = device.description;
+        
+        const payStatus = device.payment_status || 'unclassified';
+        const radioToSelect = document.querySelector(`input[name="edit-payment-status"][value="${payStatus}"]`);
+        if (radioToSelect) {
+            radioToSelect.checked = true;
+        } else {
+            // Uncheck both if unclassified
+            const allRadios = document.querySelectorAll(`input[name="edit-payment-status"]`);
+            allRadios.forEach(r => r.checked = false);
+        }
+        
+        const editAmountLabel = document.getElementById('label-edit-device-amount');
+        if (editAmountLabel) {
+            editAmountLabel.textContent = payStatus === 'unpaid' ? 'Amount Expected' : 'Amount Paid';
+        }
     } else {
         deviceToEdit = null;
         if (editForm) editForm.reset();
@@ -819,14 +934,19 @@ if (extendForm) {
         if (!deviceToExtend || !extendExpiryInput) return;
 
         const newExpiry = extendExpiryInput.value;
+        const newCount = (deviceToExtend.renewal_count || 0) + 1;
         const success = await window.DeviceDB.updateDevice(deviceToExtend.id, {
             expiry: newExpiry,
-            status: new Date(newExpiry) > new Date() ? 'Active' : 'Expired'
+            status: new Date(newExpiry) > new Date() ? 'Active' : 'Expired',
+            cycle_start_date: new Date().toISOString(),
+            renewal_count: newCount
         });
 
         if (success) {
             deviceToExtend.expiry = newExpiry;
             deviceToExtend.status = new Date(newExpiry) > new Date() ? 'Active' : 'Expired';
+            deviceToExtend.cycle_start_date = new Date().toISOString();
+            deviceToExtend.renewal_count = newCount;
             renderTable();
             updateStats();
             updateReports();
@@ -849,10 +969,12 @@ if (editForm) {
         e.preventDefault();
         if (!deviceToEdit) return;
 
+        const editPayStatusInput = document.querySelector('input[name="edit-payment-status"]:checked');
         const details = {
             username: editUsername.value,
             amount: parseFloat(editAmount.value),
-            description: editDescription.value
+            description: editDescription.value,
+            payment_status: editPayStatusInput ? editPayStatusInput.value : 'paid'
         };
 
         const success = await window.DeviceDB.updateDeviceDetails(deviceToEdit.id, details);
@@ -861,6 +983,7 @@ if (editForm) {
             deviceToEdit.username = details.username;
             deviceToEdit.amount = details.amount;
             deviceToEdit.description = details.description;
+            deviceToEdit.payment_status = details.payment_status;
             renderTable();
             toggleEditModal(false);
             showToast(`Information updated for ${deviceToEdit.code}`, 'success');
@@ -916,6 +1039,7 @@ if (addDeviceForm) {
         const amountInput = document.getElementById('device-amount');
         const descriptionInput = document.getElementById('device-description');
         const expiryInput = document.getElementById('device-expiry');
+        const paymentStatusInput = document.querySelector('input[name="payment-status"]:checked');
 
         if (!codeInput || !usernameInput || !amountInput || !descriptionInput || !expiryInput) return;
 
@@ -926,7 +1050,10 @@ if (addDeviceForm) {
             description: descriptionInput.value,
             status: new Date(expiryInput.value) > new Date() ? 'Active' : 'Expired',
             expiry: expiryInput.value,
-            created_at: new Date().toISOString() // Automatic time
+            created_at: new Date().toISOString(), // Automatic time
+            cycle_start_date: new Date().toISOString(),
+            renewal_count: 0,
+            payment_status: paymentStatusInput ? paymentStatusInput.value : 'paid'
         };
 
         try {
